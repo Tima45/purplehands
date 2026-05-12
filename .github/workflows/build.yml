@@ -1,0 +1,23 @@
+name: Build MinGW DLL
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Configure CMake
+      run: cmake -G "MinGW Makefiles" -S . -B build
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: driver_purplehands_dll
+        path: build/driver_purplehands.dll
