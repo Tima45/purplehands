@@ -17,7 +17,7 @@ jobs:
       run: cmake --build build
 
     - name: Upload Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: driver_purplehands_dll
         path: build/driver_purplehands.dll
