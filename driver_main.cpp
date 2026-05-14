@@ -242,7 +242,7 @@ public:
         
         sockaddr_in serverAddr;
         serverAddr.sin_family = AF_INET;
-        serverAddr.sin_port = htons(9001);
+        serverAddr.sin_port = htons(9009); // <--- ИЗМЕНЕНО на 9009
         serverAddr.sin_addr.s_addr = INADDR_ANY;
         bind(m_udpSocket, (SOCKADDR*)&serverAddr, sizeof(serverAddr));
 
