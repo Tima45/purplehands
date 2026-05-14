@@ -264,29 +264,33 @@ public:
 
     virtual const char* const* GetInterfaceVersions() override { return vr::k_InterfaceVersions; }
 
-    // Вызывается SteamVR каждый кадр
-    virtual void RunFrame() override {
+virtual void RunFrame() override {
         HandPacket packet;
         sockaddr_in clientAddr;
         int clientLength = sizeof(clientAddr);
         
-        // 1. ОПУСТОШЕНИЕ БУФЕРА (Draining) - Читаем всё, что есть в очереди
+        // 1. ОПУСТОШЕНИЕ БУФЕРА
         while (true) {
             int bytesRead = recvfrom(m_udpSocket, (char*)&packet, sizeof(HandPacket), 0, (SOCKADDR*)&clientAddr, &clientLength);
             
+            if (bytesRead < 0) {
+                // Пакеты закончились (ошибка WSAEWOULDBLOCK) - выходим из цикла
+                break;
+            }
+
             if (bytesRead == sizeof(HandPacket)) {
+                // Это наш пакет! Обрабатываем.
                 if (packet.isRightHand == 1 && m_pRightHand) {
                     m_pRightHand->OnPacketReceived(packet);
                 } else if (packet.isRightHand == 0 && m_pLeftHand) {
                     m_pLeftHand->OnPacketReceived(packet);
                 }
-            } else {
-                // Если пакетов больше нет, цикл прерывается
-                break;
             }
+            // Если прилетел пакет другого размера - цикл просто пойдет на следующий круг 
+            // и выкинет его, не прерывая опустошение!
         }
 
-        // 2. Сглаживание и рендер самых свежих данных
+        // 2. Сглаживание и рендер
         if (m_pLeftHand) m_pLeftHand->ProcessFrame();
         if (m_pRightHand) m_pRightHand->ProcessFrame();
     }
