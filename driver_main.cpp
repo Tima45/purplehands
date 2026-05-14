@@ -95,8 +95,7 @@ private:
     float m_currentPos[3] = {0, 0, 0};
     vr::HmdQuaternion_t m_currentQuat = {1, 0, 0, 0};
 
-    // Фактор интерполяции (0.0 - нет движения, 1.0 - мгновенный прыжок без сглаживания)
-    // 0.15 отлично подходит для 144 Гц шлема и 30 Гц камеры.
+    // Фактор интерполяции (0.15 отлично подходит для 144 Гц)
     const float SMOOTH_FACTOR = 0.15f; 
 
 public:
@@ -106,8 +105,11 @@ public:
         m_unObjectId = unObjectId;
         m_ulPropertyContainer = vr::VRProperties()->TrackedDeviceToPropertyContainer(m_unObjectId);
 
-        vr::VRProperties()->SetStringProperty(m_ulPropertyContainer, vr::Prop_ModelNumber_String, m_isRightHand ? "PurpleHand_Right" : "PurpleHand_Left");
-        vr::VRProperties()->SetStringProperty(m_ulPropertyContainer, vr::Prop_RenderModelName_String, "vr_controller_vive_1_5"); 
+        // МАСКИРУЕМСЯ ПОД VALVE INDEX KNUCKLES
+        vr::VRProperties()->SetStringProperty(m_ulPropertyContainer, vr::Prop_ModelNumber_String, m_isRightHand ? "Knuckles Right" : "Knuckles Left");
+        vr::VRProperties()->SetStringProperty(m_ulPropertyContainer, vr::Prop_RenderModelName_String, m_isRightHand ? "{indexcontroller}valve_controller_knu_1_0_right" : "{indexcontroller}valve_controller_knu_1_0_left");
+        vr::VRProperties()->SetStringProperty(m_ulPropertyContainer, vr::Prop_ManufacturerName_String, "Valve");
+        
         vr::VRProperties()->SetInt32Property(m_ulPropertyContainer, vr::Prop_ControllerRoleHint_Int32, m_isRightHand ? vr::TrackedControllerRole_RightHand : vr::TrackedControllerRole_LeftHand);
         vr::VRProperties()->SetInt32Property(m_ulPropertyContainer, vr::Prop_DeviceClass_Int32, vr::TrackedDeviceClass_Controller);
 
@@ -143,7 +145,7 @@ public:
         return pose;
     }
 
-    // Сохраняем новые данные от Питона (Цель)
+    // Сохраняем новые данные от Питона в качестве "цели"
     void OnPacketReceived(const HandPacket& packet) {
         m_targetPos[0] = packet.posX;
         m_targetPos[1] = packet.posY;
@@ -151,7 +153,7 @@ public:
         
         m_targetQuat = { packet.bones[0].w, packet.bones[0].x, packet.bones[0].y, packet.bones[0].z };
 
-        // Если это первый пакет, телепортируем руку мгновенно (чтобы она не летела из точки 0,0,0)
+        // Мгновенный телепорт при первом кадре
         if (m_isFirstUpdate) {
             m_currentPos[0] = m_targetPos[0]; m_currentPos[1] = m_targetPos[1]; m_currentPos[2] = m_targetPos[2];
             m_currentQuat = m_targetQuat;
@@ -159,7 +161,7 @@ public:
         }
     }
 
-    // Вызывается 144 раза в секунду (Плавное обновление)
+    // Вызывается SteamVR каждый кадр (Сглаживание и отправка)
     void ProcessFrame() {
         if (m_unObjectId == vr::k_unTrackedDeviceIndexInvalid || m_isFirstUpdate) return;
 
@@ -170,7 +172,7 @@ public:
         
         m_currentQuat = SlerpQuat(m_currentQuat, m_targetQuat, SMOOTH_FACTOR);
 
-        // 2. ПЕРЕВОД В ГЛОБАЛЬНЫЕ КООРДИНАТЫ ПО СВЕЖЕЙ ПОЗИЦИИ ШЛЕМА
+        // 2. ПЕРЕВОД В ГЛОБАЛЬНЫЕ КООРДИНАТЫ ШЛЕМА
         vr::TrackedDevicePose_t hmdPose;
         vr::VRServerDriverHost()->GetRawTrackedDevicePoses(0.0f, &hmdPose, 1);
         const vr::HmdMatrix34_t& mat = hmdPose.mDeviceToAbsoluteTracking;
@@ -182,26 +184,33 @@ public:
         vr::HmdQuaternion_t hmdQuat = GetMatrixQuat(mat);
         vr::HmdQuaternion_t finalQuat = MultiplyQuat(hmdQuat, m_currentQuat);
 
-        // 3. ОТПРАВКА ДАННЫХ В STEAMVR
+        // 3. ОБНОВЛЕНИЕ СКЕЛЕТА (Только запястье, пальцы прямые)
         vr::VRBoneTransform_t boneTransforms[31];
         for (int i = 0; i < 31; i++) {
             if (i == 0) {
+                // Корень (Root/Wrist) - получает мировые координаты и вращение
                 boneTransforms[i].position.v[0] = worldX;
                 boneTransforms[i].position.v[1] = worldY;
                 boneTransforms[i].position.v[2] = worldZ;
+                boneTransforms[i].orientation.x = finalQuat.x;
+                boneTransforms[i].orientation.y = finalQuat.y;
+                boneTransforms[i].orientation.z = finalQuat.z;
+                boneTransforms[i].orientation.w = finalQuat.w;
             } else {
+                // Все фаланги пальцев - нулевая поза
                 boneTransforms[i].position.v[0] = 0.0f;
                 boneTransforms[i].position.v[1] = 0.0f;
                 boneTransforms[i].position.v[2] = 0.0f;
+                boneTransforms[i].orientation.x = 0.0f;
+                boneTransforms[i].orientation.y = 0.0f;
+                boneTransforms[i].orientation.z = 0.0f;
+                boneTransforms[i].orientation.w = 1.0f; 
             }
-            boneTransforms[i].orientation.x = finalQuat.x;
-            boneTransforms[i].orientation.y = finalQuat.y;
-            boneTransforms[i].orientation.z = finalQuat.z;
-            boneTransforms[i].orientation.w = finalQuat.w;
         }
 
         vr::VRDriverInput()->UpdateSkeletonComponent(m_skeletonHandle, vr::VRSkeletalMotionRange_WithoutController, boneTransforms, 31);
 
+        // 4. ОБНОВЛЕНИЕ ПОЗИЦИИ САМОГО КОНТРОЛЛЕРА
         vr::DriverPose_t pose = GetPose();
         pose.vecPosition[0] = worldX;
         pose.vecPosition[1] = worldY;
@@ -237,6 +246,7 @@ public:
         serverAddr.sin_addr.s_addr = INADDR_ANY;
         bind(m_udpSocket, (SOCKADDR*)&serverAddr, sizeof(serverAddr));
 
+        // Включаем неблокирующий режим сокета (важно для опустошения буфера)
         u_long mode = 1;
         ioctlsocket(m_udpSocket, FIONBIO, &mode);
 
@@ -254,24 +264,29 @@ public:
 
     virtual const char* const* GetInterfaceVersions() override { return vr::k_InterfaceVersions; }
 
-    // Вызывается SteamVR 144 раза в секунду
+    // Вызывается SteamVR каждый кадр
     virtual void RunFrame() override {
         HandPacket packet;
         sockaddr_in clientAddr;
         int clientLength = sizeof(clientAddr);
         
-        // 1. Проверяем, пришли ли новые данные от Питона (30 раз в секунду)
-        int bytesRead = recvfrom(m_udpSocket, (char*)&packet, sizeof(HandPacket), 0, (SOCKADDR*)&clientAddr, &clientLength);
-        
-        if (bytesRead == sizeof(HandPacket)) {
-            if (packet.isRightHand == 1 && m_pRightHand) {
-                m_pRightHand->OnPacketReceived(packet);
-            } else if (packet.isRightHand == 0 && m_pLeftHand) {
-                m_pLeftHand->OnPacketReceived(packet);
+        // 1. ОПУСТОШЕНИЕ БУФЕРА (Draining) - Читаем всё, что есть в очереди
+        while (true) {
+            int bytesRead = recvfrom(m_udpSocket, (char*)&packet, sizeof(HandPacket), 0, (SOCKADDR*)&clientAddr, &clientLength);
+            
+            if (bytesRead == sizeof(HandPacket)) {
+                if (packet.isRightHand == 1 && m_pRightHand) {
+                    m_pRightHand->OnPacketReceived(packet);
+                } else if (packet.isRightHand == 0 && m_pLeftHand) {
+                    m_pLeftHand->OnPacketReceived(packet);
+                }
+            } else {
+                // Если пакетов больше нет, цикл прерывается
+                break;
             }
         }
 
-        // 2. Двигаем руки ВСЕГДА (144 раза в секунду), даже если новых данных не было
+        // 2. Сглаживание и рендер самых свежих данных
         if (m_pLeftHand) m_pLeftHand->ProcessFrame();
         if (m_pRightHand) m_pRightHand->ProcessFrame();
     }
